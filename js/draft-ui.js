@@ -1179,7 +1179,9 @@ function buildAiRookieOrder(rookies){
   const strat = (window.GMStrategy?.getStrategy ? window.GMStrategy.getStrategy() : {}) || {};
   const assess = (window.assessTeamFromGlobal || window.App?.assessTeamFromGlobal || (() => null))(window.S?.myRosterId);
   const needs = new Set((assess?.needs || []).map(n => typeof n === 'string' ? n : n?.pos).filter(Boolean));
-  const draftStyle = strat.draftStyle || strat.mode || 'mix';
+  const _rawDs = strat.draftStyle || strat.mode || 'mix';
+  // Canonical 'positional_need' maps to this board's 'need' vocabulary.
+  const draftStyle = _rawDs === 'positional_need' ? 'need' : _rawDs;
   const needBias = draftStyle === 'need' ? 1.35 : draftStyle === 'bpa' ? 0.8 : 1;
   const youthPremium = (strat.timeline === 'rebuild' || strat.timeline === '2_3_years' || strat.timeline === 'dynasty_long') ? 1.12 : 1;
   const targets = new Set(strat.targetPositions || strat.targets || []);
@@ -1441,7 +1443,7 @@ function renderRookieBoard(){
 
   // Hero card — Alex's decisive pick, big and bold
   const _rbStrat = window.GMStrategy?.getStrategy ? window.GMStrategy.getStrategy() : {};
-  const _rbDs = _rbStrat.draftStyle || 'bpa';
+  const _rbDs = (_rbStrat.draftStyle === 'positional_need' ? 'need' : _rbStrat.draftStyle) || 'bpa';
   const _rbAssess = typeof assessTeamFromGlobal === 'function' ? assessTeamFromGlobal(S.myRosterId) : null;
   const _rbNeeds = (_rbAssess?.needs || []).map(n => typeof n === 'string' ? n : n.pos);
   let _rbHero = '';
@@ -1887,7 +1889,7 @@ function renderTopProspects(){
 
   // Strategy context
   const strat = window.GMStrategy?.getStrategy ? window.GMStrategy.getStrategy() : {};
-  const draftStyle = strat.draftStyle || 'bpa';
+  const draftStyle = (strat.draftStyle === 'positional_need' ? 'need' : strat.draftStyle) || 'bpa';
   const targetPos = strat.targetPositions || [];
 
   // Find rookies by source=FC_ROOKIE, sorted by DHQ value

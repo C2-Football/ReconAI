@@ -130,8 +130,13 @@ function openPlayerModal(playerId){
       if(stratLabel==='SELL')stratCol='var(--red)';
     }
 
-    // Check sell rules (sell above age threshold)
-    const sellRule=(strat.sellRules||[]).find(r=>r.pos===pos&&(age||0)>=r.ageAbove);
+    // Check sell rules (sell above age threshold). Rules are free-text strings
+    // (or legacy objects) — parse each to {pos,ageAbove} the same way checkAlignment does.
+    const _parseRule=window.App?.Strategy?.parseSellRule||window.GMStrategy?.parseSellRule;
+    const _sellPos=window.App?.normPos?.(pos)||pos;
+    const sellRule=_parseRule
+      ?(strat.sellRules||[]).map(_parseRule).find(r=>r.pos&&r.pos===_sellPos&&(!r.ageAbove||(age||0)>=r.ageAbove))
+      :(strat.sellRules||[]).find(r=>r&&typeof r==='object'&&r.pos===pos&&(age||0)>=r.ageAbove);
     if(sellRule&&stratLabel!=='SKIP'){
       stratLabel='SELL HIGH';stratReason='Age '+age+' triggers your sell rule for '+pos+'. Trade while value holds.';stratCol='var(--amber)';
     }

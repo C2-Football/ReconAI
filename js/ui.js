@@ -994,7 +994,9 @@ function renderTopPickupHero(){
 
   // Strategy context for FAAB scaling
   const strat=window.GMStrategy?.getStrategy?window.GMStrategy.getStrategy():{};
-  const aggression=strat.aggression||'medium';
+  // Map canonical GM Strategy aggression (conservative/medium/aggressive) onto the
+  // high/medium/low bands this FAAB block branches on (legacy values pass through).
+  const aggression=(strat.aggression==='aggressive'||strat.aggression==='high')?'high':(strat.aggression==='conservative'||strat.aggression==='low')?'low':'medium';
   const aggrMult=aggression==='high'?1.4:aggression==='low'?0.7:1.0;
   const targetPositions=strat.targetPositions||[];
 
@@ -1533,7 +1535,8 @@ function renderWaiverAlexTop5() {
   }
 
   const strat = window.GMStrategy?.getStrategy ? window.GMStrategy.getStrategy() : {};
-  const aggression = strat.aggression || 'medium';
+  // Map canonical aggression onto the high/medium/low bands (legacy values pass through).
+  const aggression = (strat.aggression === 'aggressive' || strat.aggression === 'high') ? 'high' : (strat.aggression === 'conservative' || strat.aggression === 'low') ? 'low' : 'medium';
   const aggrMult = aggression === 'high' ? 1.4 : aggression === 'low' ? 0.7 : 1.0;
   const targetPositions = strat.targetPositions || [];
   const assess = typeof assessTeamFromGlobal === 'function' ? assessTeamFromGlobal(S.myRosterId) : null;

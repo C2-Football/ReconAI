@@ -2535,6 +2535,9 @@ function _finderActionableAcceptanceFloor() {
   } catch (_) {}
   try {
     const strategy = window.GMStrategy?.getStrategy?.() || {};
+    // Explicit, user-set Trade Acceptance Floor (GM Strategy editor) wins.
+    const explicit = Number(strategy.acceptanceFloor);
+    if (Number.isFinite(explicit) && explicit > 0) return Math.max(55, Math.min(90, Math.round(explicit)));
     if (strategy.tradeAggression != null) return _finderAcceptanceFloorFromAggression(strategy.tradeAggression);
     if (strategy.aggression === 'aggressive' || strategy.aggression === 'high') return 55;
     if (strategy.aggression === 'conservative' || strategy.aggression === 'low') return 85;

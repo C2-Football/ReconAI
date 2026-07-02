@@ -1023,7 +1023,7 @@ function _scoutSyncMeta(strategy) {
   const ts = Number(strategy.lastSyncedAt || 0);
   const age = ts ? Date.now() - ts : Infinity;
   const stale = age > 6 * 60 * 60 * 1000;
-  const label = stale ? 'Stale' : 'Synced from War Room';
+  const label = stale ? 'Stale' : (strategy.lastSyncedFrom === 'scout' ? 'Saved in Scout' : 'Synced from War Room');
   return { stale, label };
 }
 
@@ -1505,14 +1505,386 @@ function _strategyOptions(options, selected) {
   return options.map(([value, label]) => `<option value="${_esc(value)}" ${String(selected) === String(value) ? 'selected' : ''}>${_esc(label)}</option>`).join('');
 }
 
+// ── GM Strategy editor — full parity with War Room ────────────────────────────
+// A preset-first configuration surface, not a tool: Rebuild / Compete / Win Now
+// presets auto-bundle every downstream variable (via the shared window.WR.GmMode
+// engine), plus an always-on Trade Acceptance Floor, Free-Agency filters,
+// priorities (target/sell positions, sell rules, untouchables roster picker) and
+// — in Custom mode — the individual aggression/draft/market/timeline/personality
+// controls. Writes CANONICAL values (rebuild/compete/win_now, 1_year/2_3_years/
+// dynasty_long, …) so every Scout + War Room consumer reads them, and mirrors
+// War Room's wr:gm-mode-changed broadcast so engines live-refresh.
+
+const STRAT_POSITIONS = ['QB', 'RB', 'WR', 'TE', 'K', 'DEF', 'DL', 'LB', 'DB', 'PICKS'];
+const STRAT_FA_POSITIONS = ['QB', 'RB', 'WR', 'TE', 'K', 'DEF', 'DL', 'LB', 'DB'];
+const STRAT_MODES = [
+  { value: 'rebuild', label: 'Rebuild', desc: 'Youth, picks, and patience.', color: '#3498db' },
+  { value: 'compete', label: 'Compete', desc: 'Build long-term while staying competitive.', color: 'var(--accent)' },
+  { value: 'win_now', label: 'Win Now', desc: 'Spend it all to win this year.', color: '#e74c3c' },
+  { value: 'custom', label: 'Custom', desc: 'Hand-tune every variable below.', color: '#7c6bf8' },
+];
+const STRAT_AGGRESSION = [
+  { value: 'conservative', label: 'Conservative', desc: 'Wait for value, never overpay.' },
+  { value: 'medium', label: 'Medium', desc: 'Calculated moves, balanced risk.' },
+  { value: 'aggressive', label: 'Aggressive', desc: 'Make the big swing, force the deal.' },
+];
+const STRAT_DRAFT_STYLES = [
+  { value: 'accumulate', label: 'Accumulate', desc: 'Stack picks, build depth.' },
+  { value: 'consolidate', label: 'Consolidate', desc: 'Package depth into elite talent.' },
+  { value: 'positional_need', label: 'Positional Need', desc: 'Fill the weakest spots first.' },
+  { value: 'bpa', label: 'BPA', desc: 'Best player available, always.' },
+];
+const STRAT_MARKET = [
+  { value: 'buy_low', label: 'Buy Low', desc: 'Target undervalued assets and injured players.' },
+  { value: 'sell_high', label: 'Sell High', desc: 'Move players at peak value before decline.' },
+  { value: 'hold', label: 'Hold', desc: 'Patient, only trade from a position of strength.' },
+  { value: 'exploit', label: 'Exploit', desc: 'Attack league-wide market inefficiencies.' },
+];
+const STRAT_TIMELINES = [
+  { value: '1_year', label: '1 Year', desc: 'All chips on this season.' },
+  { value: '2_3_years', label: '2–3 Years', desc: 'Medium-term contention window.' },
+  { value: 'dynasty_long', label: 'Dynasty Long', desc: 'Build a program, not just a season.' },
+];
+const STRAT_PERSONALITIES = [
+  { value: 'aggressive', label: 'Aggressive', desc: 'Alex hunts for wins, pushes hard on every move.' },
+  { value: 'value_hunter', label: 'Value Hunter', desc: 'Alex obsesses over undervalued assets and market gaps.' },
+  { value: 'balanced', label: 'Balanced', desc: 'Alex weighs all options before recommending a move.' },
+];
+const STRAT_TL_MAP = { '1yr': '1_year', '1_year': '1_year', '2yr': '2_3_years', '2-3yr': '2_3_years', '2_3_years': '2_3_years', 'dynasty_long': 'dynasty_long' };
+
+let _stratDraft = null;
+let _stratUntouchSearch = '';
+let _stratSellRuleDraft = '';
+
+function _stratAcceptanceFloorFor(aggression, mode) {
+  const fn = window.WR?.GmMode?.acceptanceFloorFor;
+  return typeof fn === 'function' ? fn(aggression, mode) : 75;
+}
+function _stratClampFloor(v, fallback) {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.max(55, Math.min(90, Math.round(n))) : fallback;
+}
+function _stratNormPos(pos) {
+  if (!pos) return '';
+  if (String(pos).trim().toUpperCase() === 'PICKS') return 'PICKS';
+  return window.App?.normPos?.(pos) || String(pos).trim().toUpperCase();
+}
+function _stratNormPosList(list) {
+  return Array.from(new Set((list || []).map(_stratNormPos).filter(Boolean)));
+}
+function _stratNormFa(f) {
+  return {
+    minDhq: Number(f?.minDhq) || 0,
+    maxAge: Number(f?.maxAge) || 0,
+    requirePrimeYears: !!f?.requirePrimeYears,
+    excludePositions: _stratNormPosList(f?.excludePositions),
+  };
+}
+function _stratCanonTimeline(tl) {
+  if (!tl) return '2_3_years';
+  return STRAT_TL_MAP[String(tl).trim().toLowerCase()] || tl;
+}
+function _stratTimelineLabel(v) {
+  return (STRAT_TIMELINES.find(t => t.value === v) || {}).label || v || '';
+}
+// Seed a fresh editable draft from the saved (already normalized) strategy,
+// mirroring War Room's normalizeDraft: canonical mode, aggression-derived floor
+// when unset, canonical timeline, deduped positions, singular `untouchable`.
+function _stratNormalizeDraft(saved) {
+  saved = saved || {};
+  const normalize = window.WR?.GmMode?.normalize || ((m) => m || 'compete');
+  const mode = normalize(saved.mode) || 'compete';
+  const aggression = saved.aggression || 'medium';
+  const untouch = (Array.isArray(saved.untouchable) && saved.untouchable.length)
+    ? saved.untouchable
+    : (Array.isArray(saved.untouchables) ? saved.untouchables : []);
+  return {
+    mode,
+    aggression,
+    acceptanceFloor: _stratClampFloor(saved.acceptanceFloor, _stratAcceptanceFloorFor(aggression, mode)),
+    draftStyle: saved.draftStyle || 'bpa',
+    marketPosture: saved.marketPosture || 'hold',
+    timeline: _stratCanonTimeline(saved.timeline),
+    alexPersonality: saved.alexPersonality || 'balanced',
+    targetPositions: _stratNormPosList(saved.targetPositions),
+    sellPositions: _stratNormPosList(saved.sellPositions),
+    sellRules: Array.isArray(saved.sellRules) ? saved.sellRules.slice() : [],
+    untouchable: untouch.map(String),
+    faFilters: _stratNormFa(saved.faFilters),
+  };
+}
+// Advisory "recommended mode" from the user's own team assessment (never auto-
+// applies). Maps Scout's health-tier enum to a franchise direction.
+function _stratRecommendedMode() {
+  try {
+    const S = window.S || {};
+    const rid = S.myRosterId;
+    const a = (rid != null && typeof window.assessTeamFromGlobal === 'function') ? window.assessTeamFromGlobal(rid) : null;
+    if (!a) return null;
+    const tier = String(a.tier || '').toUpperCase();
+    const health = Number(a.healthScore) || 0;
+    let mode;
+    if (tier.includes('REBUILD') || (health && health < 70)) mode = 'rebuild';
+    else if (tier.includes('ELITE') || tier.includes('CONTEND') || health >= 82) mode = 'win_now';
+    else mode = 'compete';
+    return { mode, tierLabel: a.tier ? String(a.tier) : null, health };
+  } catch (_) { return null; }
+}
+// Resolve my roster's players → {id, name, pos} for the untouchables picker.
+function _stratRosterPlayers() {
+  const S = window.S || {};
+  const my = (typeof window.myR === 'function')
+    ? window.myR()
+    : ((S.rosters || []).find(r => String(r.roster_id) === String(S.myRosterId)) || null);
+  const pids = my?.players || [];
+  if (!pids.length) return [];
+  return pids.filter(pid => pid && pid !== '0').map(pid => {
+    const pd = (S.players || {})[pid] || {};
+    const name = (typeof window.pName === 'function' ? window.pName(pid) : null) || pd.full_name || pd.name || String(pid);
+    const rawPos = pd.position || (typeof window.pPos === 'function' ? window.pPos(pid) : '') || '?';
+    return { id: String(pid), name, pos: _scoutPosLabel(_stratNormPos(rawPos)) };
+  }).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// ── Render helpers ────────────────────────────────────────────────────────────
+function _stratSection(title, sub, inner) {
+  return `<section class="strat-section">
+    <div class="strat-section-head">${_esc(title)}</div>
+    ${sub ? `<div class="strat-section-sub">${_esc(sub)}</div>` : ''}
+    ${inner}
+  </section>`;
+}
+function _stratOptCards(opts, activeVal, onclickFor) {
+  return `<div class="strat-opt-grid">` + opts.map(o =>
+    `<button type="button" class="strat-opt-card${activeVal === o.value ? ' active' : ''}" onclick="${onclickFor(o.value)}"><strong>${_esc(o.label)}</strong><small>${_esc(o.desc)}</small></button>`
+  ).join('') + `</div>`;
+}
+function _stratModeCardsHtml(rec) {
+  return `<div class="strat-opt-grid strat-mode-grid">` + STRAT_MODES.map(m => {
+    const active = _stratDraft.mode === m.value;
+    const isRec = rec && rec.mode === m.value;
+    const onclick = m.value === 'custom' ? `_stratSet('mode','custom')` : `_stratApplyPreset('${m.value}')`;
+    return `<button type="button" class="strat-opt-card strat-mode-card${active ? ' active' : ''}" style="--mc:${m.color}" onclick="${onclick}">
+      <span class="strat-mode-dot" aria-hidden="true"></span>
+      <div class="strat-mode-top"><strong>${_esc(m.label)}</strong>${isRec ? `<em class="strat-rec-pill" title="Based on your roster">★ Rec</em>` : ''}</div>
+      <small>${_esc(m.desc)}</small>
+    </button>`;
+  }).join('') + `</div>`;
+}
+function _stratPosMulti(selectedArr, key, options) {
+  return `<div class="strat-pill-row">` + options.map(pos => {
+    const active = (selectedArr || []).includes(pos);
+    return `<button type="button" class="strat-pill${active ? ' active' : ''}" onclick="_stratToggleArr('${key}','${pos}')">${_esc(_scoutPosLabel(pos))}</button>`;
+  }).join('') + `</div>`;
+}
+function _stratFaExcludeHtml() {
+  const sel = (_stratDraft.faFilters?.excludePositions) || [];
+  return `<div class="strat-pill-row">` + STRAT_FA_POSITIONS.map(pos =>
+    `<button type="button" class="strat-pill${sel.includes(pos) ? ' active' : ''}" onclick="_stratToggleFaPos('${pos}')">${_esc(_scoutPosLabel(pos))}</button>`
+  ).join('') + `</div>`;
+}
+function _stratUntouchResultsHtml() {
+  const players = _stratRosterPlayers();
+  const q = (_stratUntouchSearch || '').trim().toLowerCase();
+  const chosen = (_stratDraft?.untouchable || []).map(String);
+  let filtered = players.filter(p => !chosen.includes(p.id));
+  if (q) filtered = filtered.filter(p => p.name.toLowerCase().includes(q) || p.pos.toLowerCase().includes(q));
+  filtered = filtered.slice(0, 12);
+  if (!filtered.length) return q ? `<div class="strat-empty">No match on your roster.</div>` : '';
+  return filtered.map(p =>
+    `<button type="button" class="strat-untouch-row" onclick="_stratAddUntouchable('${_scoutAttr(p.id)}')"><i>${_esc(p.pos)}</i>${_esc(p.name)}</button>`
+  ).join('');
+}
+function _stratRenderBody() {
+  const body = document.getElementById('strategy-editor-body');
+  if (!body || !_stratDraft) return;
+  const card = document.getElementById('strategy-editor-card');
+  const scroll = card ? card.scrollTop : 0;
+  const d = _stratDraft;
+  const isCustom = d.mode === 'custom';
+  const rec = _stratRecommendedMode();
+  const rosterPlayers = _stratRosterPlayers();
+  const currentMode = STRAT_MODES.find(m => m.value === d.mode);
+  const fa = d.faFilters || {};
+  const parts = [];
+
+  // ── Mode (preset-first) ──
+  parts.push(_stratSection('Mode',
+    (currentMode?.desc || '') + (isCustom ? '' : ' Preset bundles every downstream setting — pick Custom to tune individually.'),
+    _stratModeCardsHtml(rec)
+    + (rec ? `<div class="strat-rec-line"><strong>★ Recommended:</strong> ${_esc(STRAT_MODES.find(m => m.value === rec.mode)?.label || '')}${rec.tierLabel ? ` — your team grades ${_esc(String(rec.tierLabel))}` : ''}. You can still pick any direction.</div>` : '')
+    + (!isCustom ? `<div class="strat-preset-applied"><strong>Preset applied:</strong> aggression <em>${_esc(d.aggression)}</em> · draft <em>${_esc(d.draftStyle)}</em> · market <em>${_esc(d.marketPosture)}</em> · timeline <em>${_esc(_stratTimelineLabel(d.timeline))}</em> · Alex <em>${_esc(d.alexPersonality)}</em></div>` : '')
+  ));
+
+  // ── Trade Acceptance Floor (always visible) ──
+  parts.push(_stratSection('Trade Acceptance Floor',
+    'The minimum acceptance an offer must clear to read as Playable. Lower = chase long-shots; higher = only safe, fair offers. Seeded by your aggression.',
+    `<div class="strat-floor-row">
+      <div class="strat-floor-val" id="strat-floor-val">${d.acceptanceFloor}%</div>
+      <div class="strat-floor-slider">
+        <input type="range" min="55" max="90" step="1" value="${d.acceptanceFloor}" oninput="_stratSetFloor(this.value)" onchange="_stratRenderBody()" aria-label="Trade acceptance floor">
+        <div class="strat-floor-scale"><span>55% · long-shots</span><span>safe only · 90%</span></div>
+      </div>
+    </div>
+    <div class="strat-sub">Quick set</div>
+    <div class="strat-pill-row">
+      ${[[82, 'Conservative · 82%'], [75, 'Balanced · 75%'], [58, 'Aggressive · 58%']].map(([v, l]) => `<button type="button" class="strat-pill${d.acceptanceFloor === v ? ' active' : ''}" onclick="_stratQuickFloor(${v})">${_esc(l)}</button>`).join('')}
+    </div>`
+  ));
+
+  // ── Aggression (Custom only) ──
+  if (isCustom) {
+    const aggDesc = STRAT_AGGRESSION.find(a => a.value === d.aggression)?.desc || '';
+    parts.push(_stratSection('Aggression', aggDesc + ' Also re-seeds the acceptance floor above.',
+      `<div class="strat-pill-row full">` + STRAT_AGGRESSION.map(a => `<button type="button" class="strat-pill${d.aggression === a.value ? ' active' : ''}" onclick="_stratSetAggression('${a.value}')">${_esc(a.label)}</button>`).join('') + `</div>`
+    ));
+  }
+
+  // ── Free-Agency Filters ──
+  parts.push(_stratSection('Free-Agency Filters',
+    'Tune who shows up in your waiver / FA recommendations. The market explorer still shows everyone.',
+    `<div class="strat-sub">Minimum DHQ — hide anyone below</div>
+     <div class="strat-pill-row">${[[0, 'Off'], [500, '500'], [1000, '1,000'], [2000, '2,000'], [4000, '4,000']].map(([v, l]) => `<button type="button" class="strat-pill${(fa.minDhq || 0) === v ? ' active' : ''}" onclick="_stratSetFa('minDhq',${v})">${_esc(l)}</button>`).join('')}</div>
+     <div class="strat-sub">Max age — hide older than</div>
+     <div class="strat-pill-row">${[[0, 'Any'], [24, '≤24'], [27, '≤27'], [30, '≤30']].map(([v, l]) => `<button type="button" class="strat-pill${(fa.maxAge || 0) === v ? ' active' : ''}" onclick="_stratSetFa('maxAge',${v})">${_esc(l)}</button>`).join('')}</div>
+     <div class="strat-sub">Prime window</div>
+     <div class="strat-pill-row full">
+       <button type="button" class="strat-pill${!fa.requirePrimeYears ? ' active' : ''}" onclick="_stratSetFa('requirePrimeYears',false)">Any window</button>
+       <button type="button" class="strat-pill${fa.requirePrimeYears ? ' active' : ''}" onclick="_stratSetFa('requirePrimeYears',true)">Prime years only</button>
+     </div>
+     <div class="strat-sub">Exclude positions — never recommend</div>
+     ${_stratFaExcludeHtml()}`
+  ));
+
+  // ── Priorities ──
+  const sellRuleChips = (d.sellRules || []).length
+    ? (d.sellRules || []).map((rule, i) => {
+        const t = typeof rule === 'string' ? rule : (rule.note || [rule.pos, rule.ageAbove ? ('age ' + rule.ageAbove + '+') : ''].filter(Boolean).join(' '));
+        return `<span class="strat-chip">${_esc(t)}<button type="button" class="strat-chip-x" onclick="_stratRemoveSellRule(${i})" aria-label="Remove">×</button></span>`;
+      }).join('')
+    : `<span class="strat-empty">No rules set</span>`;
+  const untouchChips = (d.untouchable || []).length
+    ? (d.untouchable || []).map((id, i) => {
+        const p = rosterPlayers.find(r => r.id === String(id));
+        const name = p ? p.name : String(id);
+        return `<span class="strat-chip strat-chip-lock">🛡 ${_esc(name)}<button type="button" class="strat-chip-x" onclick="_stratRemoveUntouchable(${i})" aria-label="Remove">×</button></span>`;
+      }).join('')
+    : `<span class="strat-empty">No untouchables set</span>`;
+  parts.push(_stratSection('Priorities', '',
+    `<div class="strat-sub">Target positions</div>
+     ${_stratPosMulti(d.targetPositions, 'targetPositions', STRAT_POSITIONS)}
+     <div class="strat-sub">Sell positions</div>
+     ${_stratPosMulti(d.sellPositions, 'sellPositions', STRAT_POSITIONS)}
+     <div class="strat-sub">Sell rules</div>
+     <div class="strat-chip-row">${sellRuleChips}</div>
+     <div class="strat-add-row">
+       <input type="text" id="strat-sellrule-input" class="strat-input" placeholder='e.g. "Sell RB age 27+"' value="${_scoutAttr(_stratSellRuleDraft)}" oninput="_stratSellRuleInput(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();_stratAddSellRule();}">
+       <button type="button" class="strat-add-btn" onclick="_stratAddSellRule()">Add</button>
+     </div>
+     <div class="strat-sub">Untouchables</div>
+     <div class="strat-chip-row">${untouchChips}</div>
+     ${rosterPlayers.length
+        ? `<input type="text" id="strat-untouch-input" class="strat-input" placeholder="Search your roster…" value="${_scoutAttr(_stratUntouchSearch)}" oninput="_stratUntouchInput(this.value)">
+     <div class="strat-untouch-results" id="strat-untouch-results">${_stratUntouchResultsHtml()}</div>`
+        : `<div class="strat-empty">Connect your league to protect specific players.</div>`}`
+  ));
+
+  // ── Custom-only advanced ──
+  if (isCustom) {
+    parts.push(_stratSection('Draft Style', '', _stratOptCards(STRAT_DRAFT_STYLES, d.draftStyle, v => `_stratSet('draftStyle','${v}')`)));
+    parts.push(_stratSection('Market Posture', '', _stratOptCards(STRAT_MARKET, d.marketPosture, v => `_stratSet('marketPosture','${v}')`)));
+    parts.push(_stratSection('Timeline', '',
+      `<div class="strat-pill-row full">${STRAT_TIMELINES.map(t => `<button type="button" class="strat-pill${d.timeline === t.value ? ' active' : ''}" onclick="_stratSet('timeline','${t.value}')">${_esc(t.label)}</button>`).join('')}</div>
+       <div class="strat-section-sub" style="margin-top:6px">${_esc(STRAT_TIMELINES.find(t => t.value === d.timeline)?.desc || '')}</div>`
+    ));
+    parts.push(_stratSection('Alex Personality', 'How Alex frames advice and recommendations.', _stratOptCards(STRAT_PERSONALITIES, d.alexPersonality, v => `_stratSet('alexPersonality','${v}')`)));
+  }
+
+  body.innerHTML = parts.join('');
+  if (card) card.scrollTop = scroll;
+}
+
+// ── State mutators (all window-exported for inline handlers) ──────────────────
+function _stratSet(key, val) { if (!_stratDraft) return; _stratDraft[key] = val; _stratRenderBody(); }
+function _stratApplyPreset(modeId) {
+  if (!_stratDraft) return;
+  const preset = window.WR?.GmMode?.getPreset?.(modeId);
+  const cfg = (preset && preset.config) || {};
+  _stratDraft = {
+    ..._stratDraft,
+    ...cfg,
+    mode: modeId,
+    acceptanceFloor: _stratAcceptanceFloorFor(cfg.aggression || _stratDraft.aggression, modeId),
+  };
+  _stratDraft.timeline = _stratCanonTimeline(_stratDraft.timeline);
+  _stratDraft.targetPositions = _stratNormPosList(_stratDraft.targetPositions);
+  _stratDraft.sellPositions = _stratNormPosList(_stratDraft.sellPositions);
+  _stratRenderBody();
+}
+function _stratSetAggression(v) {
+  if (!_stratDraft) return;
+  _stratDraft.aggression = v;
+  _stratDraft.acceptanceFloor = _stratAcceptanceFloorFor(v, _stratDraft.mode);
+  _stratRenderBody();
+}
+function _stratSetFloor(v) {
+  if (!_stratDraft) return;
+  _stratDraft.acceptanceFloor = _stratClampFloor(v, 75);
+  const lbl = document.getElementById('strat-floor-val');
+  if (lbl) lbl.textContent = _stratDraft.acceptanceFloor + '%';
+}
+function _stratQuickFloor(v) { if (!_stratDraft) return; _stratDraft.acceptanceFloor = _stratClampFloor(v, 75); _stratRenderBody(); }
+function _stratToggleArr(key, val) {
+  if (!_stratDraft) return;
+  const arr = _stratDraft[key] || [];
+  _stratDraft[key] = arr.includes(val) ? arr.filter(x => x !== val) : [...arr, val];
+  _stratRenderBody();
+}
+function _stratSetFa(key, val) { if (!_stratDraft) return; _stratDraft.faFilters = { ..._stratDraft.faFilters, [key]: val }; _stratRenderBody(); }
+function _stratToggleFaPos(pos) {
+  if (!_stratDraft) return;
+  const cur = (_stratDraft.faFilters?.excludePositions) || [];
+  const next = cur.includes(pos) ? cur.filter(x => x !== pos) : [...cur, pos];
+  _stratDraft.faFilters = { ..._stratDraft.faFilters, excludePositions: next };
+  _stratRenderBody();
+}
+function _stratSellRuleInput(v) { _stratSellRuleDraft = v; }
+function _stratAddSellRule() {
+  if (!_stratDraft) return;
+  const inp = document.getElementById('strat-sellrule-input');
+  const v = String(inp?.value || _stratSellRuleDraft || '').trim();
+  if (!v) return;
+  _stratDraft.sellRules = [...(_stratDraft.sellRules || []), v];
+  _stratSellRuleDraft = '';
+  _stratRenderBody();
+}
+function _stratRemoveSellRule(i) { if (!_stratDraft) return; _stratDraft.sellRules = (_stratDraft.sellRules || []).filter((_, j) => j !== i); _stratRenderBody(); }
+function _stratUntouchInput(val) {
+  _stratUntouchSearch = val;
+  const box = document.getElementById('strat-untouch-results');
+  if (box) box.innerHTML = _stratUntouchResultsHtml();
+}
+function _stratAddUntouchable(id) {
+  if (!_stratDraft) return;
+  id = String(id);
+  if (!(_stratDraft.untouchable || []).map(String).includes(id)) {
+    _stratDraft.untouchable = [...(_stratDraft.untouchable || []), id];
+  }
+  _stratUntouchSearch = '';
+  _stratRenderBody();
+}
+function _stratRemoveUntouchable(i) { if (!_stratDraft) return; _stratDraft.untouchable = (_stratDraft.untouchable || []).filter((_, j) => j !== i); _stratRenderBody(); }
+
 function openStrategyEditor() {
   const existing = document.getElementById('strategy-editor-modal');
   if (existing) existing.remove();
-  const strategy = _scoutStrategy();
+  _stratDraft = _stratNormalizeDraft(_scoutStrategy() || {});
+  _stratUntouchSearch = '';
+  _stratSellRuleDraft = '';
   const el = document.createElement('div');
   el.id = 'strategy-editor-modal';
   el.className = 'strategy-editor-overlay';
-  el.innerHTML = `<div class="strategy-editor-card">
+  el.innerHTML = `<div class="strategy-editor-card" id="strategy-editor-card">
     <div class="strategy-editor-head">
       <div>
         <span class="scout-kicker">GM Strategy</span>
@@ -1520,63 +1892,15 @@ function openStrategyEditor() {
       </div>
       <button class="strategy-editor-close" onclick="_closeStrategyEditor()" aria-label="Close">×</button>
     </div>
-
-    <div class="strategy-editor-grid">
-      <label><span>Mode</span><select id="strategy-mode">
-        ${_strategyOptions([
-          ['rebuild', 'Rebuild'],
-          ['balanced_rebuild', 'Balanced Rebuild'],
-          ['retool', 'Retool'],
-          ['win_now', 'Win Now'],
-        ], strategy.mode || 'balanced_rebuild')}
-      </select></label>
-      <label><span>Timeline</span><select id="strategy-timeline">
-        ${_strategyOptions([
-          ['1yr', '1 year'],
-          ['2-3yr', '2-3 years'],
-          ['dynasty_long', 'Dynasty long'],
-        ], strategy.timeline || '2-3yr')}
-      </select></label>
-      <label><span>Alex</span><select id="strategy-alex">
-        ${_strategyOptions([
-          ['aggressive', 'Aggressive'],
-          ['value_hunter', 'Value Hunter'],
-          ['balanced', 'Balanced'],
-        ], strategy.alexPersonality || 'balanced')}
-      </select></label>
-      <label><span>Aggression</span><select id="strategy-aggression">
-        ${_strategyOptions([
-          ['conservative', 'Conservative'],
-          ['medium', 'Medium'],
-          ['aggressive', 'Aggressive'],
-        ], strategy.aggression || 'medium')}
-      </select></label>
-      <label><span>Target positions</span><input id="strategy-targets" type="text" value="${_esc((strategy.targetPositions || []).map(_scoutPosLabel).join(', '))}" placeholder="WR, D/ST, PICKS"/></label>
-      <label><span>Sell positions</span><input id="strategy-sells" type="text" value="${_esc((strategy.sellPositions || []).map(_scoutPosLabel).join(', '))}" placeholder="RB"/></label>
-      <label><span>Draft style</span><select id="strategy-draft-style">
-        ${_strategyOptions([
-          ['accumulate', 'Accumulate'],
-          ['consolidate', 'Consolidate'],
-          ['positional_need', 'Positional Need'],
-          ['bpa', 'Best Player Available'],
-        ], strategy.draftStyle || 'bpa')}
-      </select></label>
-      <label><span>Market posture</span><select id="strategy-market">
-        ${_strategyOptions([
-          ['buy_low', 'Buy Low'],
-          ['sell_high', 'Sell High'],
-          ['hold', 'Hold'],
-          ['exploit', 'Exploit'],
-        ], strategy.marketPosture || 'hold')}
-      </select></label>
-    </div>
-
+    <div id="strategy-editor-body"></div>
     <div class="strategy-editor-actions">
       <button class="scout-secondary-btn" onclick="_closeStrategyEditor()">Cancel</button>
       <button class="scout-primary-btn" onclick="_saveScoutStrategyEditor()">Save Strategy</button>
     </div>
   </div>`;
+  el.addEventListener('click', (e) => { if (e.target === el) _closeStrategyEditor(); });
   document.body.appendChild(el);
+  _stratRenderBody();
   requestAnimationFrame(() => el.classList.add('open'));
 }
 window.openStrategyEditor = openStrategyEditor;
@@ -1589,35 +1913,50 @@ function _closeStrategyEditor() {
 }
 window._closeStrategyEditor = _closeStrategyEditor;
 
-function _strategyCsv(id) {
-  const el = document.getElementById(id);
-  return String(el?.value || '')
-    .split(',')
-    .map(s => window.App?.normPos?.(s) || s.trim().toUpperCase())
-    .filter(Boolean);
-}
-
 function _saveScoutStrategyEditor() {
+  if (!_stratDraft) { _closeStrategyEditor(); return; }
+  const d = _stratDraft;
+  // Partial update — only the fields this editor exposes. saveStrategy merges over
+  // the current strategy, so untouched fields (targetList/blockList/notes…) survive.
   const updates = {
-    mode: document.getElementById('strategy-mode')?.value || 'balanced_rebuild',
-    timeline: document.getElementById('strategy-timeline')?.value || '2-3yr',
-    alexPersonality: document.getElementById('strategy-alex')?.value || 'balanced',
-    aggression: document.getElementById('strategy-aggression')?.value || 'medium',
-    targetPositions: _strategyCsv('strategy-targets'),
-    sellPositions: _strategyCsv('strategy-sells'),
-    draftStyle: document.getElementById('strategy-draft-style')?.value || 'bpa',
-    marketPosture: document.getElementById('strategy-market')?.value || 'hold',
-    lastSyncedFrom: 'warroom',
+    mode: d.mode,
+    aggression: d.aggression,
+    acceptanceFloor: _stratClampFloor(d.acceptanceFloor, 75),
+    draftStyle: d.draftStyle,
+    marketPosture: d.marketPosture,
+    timeline: d.timeline,
+    alexPersonality: d.alexPersonality,
+    targetPositions: _stratNormPosList(d.targetPositions),
+    sellPositions: _stratNormPosList(d.sellPositions),
+    sellRules: (d.sellRules || []).slice(),
+    untouchable: (d.untouchable || []).map(String),
+    faFilters: _stratNormFa(d.faFilters),
+    lastSyncedFrom: 'scout',
   };
-  if (window.GMStrategy?.saveStrategy) window.GMStrategy.saveStrategy(updates);
+  try {
+    if (window.GMStrategy?.saveStrategy) window.GMStrategy.saveStrategy(updates);
+    // Mirror War Room's live-refresh contract so shared gm-mode consumers
+    // (useGmEffects, trade-finder floor, FA filters) re-read immediately.
+    window.dispatchEvent(new CustomEvent('wr:gm-mode-changed', { detail: { mode: updates.mode, strategy: updates } }));
+  } catch (e) {
+    console.error('Scout strategy save failed', e);
+  }
+  _stratDraft = null;
   _closeStrategyEditor();
-  renderWarRoomBrief();
-  renderCtxChips(window._activeTab || 'digest');
-  if (typeof _renderGMBarAlexBlock === 'function') _renderGMBarAlexBlock();
-  if (typeof updateSettingsStatus === 'function') updateSettingsStatus();
+  try { if (typeof renderWarRoomBrief === 'function') renderWarRoomBrief(); } catch (_) {}
+  try { renderCtxChips(window._activeTab || 'digest'); } catch (_) {}
+  try { if (typeof _renderGMBarAlexBlock === 'function') _renderGMBarAlexBlock(); } catch (_) {}
+  try { if (typeof updateSettingsStatus === 'function') updateSettingsStatus(); } catch (_) {}
   if (typeof window.showToast === 'function') window.showToast('Strategy saved.');
 }
 window._saveScoutStrategyEditor = _saveScoutStrategyEditor;
+
+// Inline on* handlers resolve against the global scope — export every mutator.
+Object.assign(window, {
+  _stratSet, _stratApplyPreset, _stratSetAggression, _stratSetFloor, _stratQuickFloor,
+  _stratToggleArr, _stratSetFa, _stratToggleFaPos, _stratAddSellRule, _stratRemoveSellRule,
+  _stratSellRuleInput, _stratUntouchInput, _stratAddUntouchable, _stratRemoveUntouchable, _stratRenderBody,
+});
 
 function renderTeamCommandPanel() {
   const host = document.getElementById('panel-team-content');
@@ -2584,7 +2923,15 @@ const FL_CATEGORY_LABELS = {
 // ── Activity panel helpers ────────────────────────────────────
 
 function _modeLabel(mode) {
-  const labels = { rebuild: 'Rebuild', balanced_rebuild: 'Balanced Rebuild', contend: 'Contend', win_now: 'Win Now' };
+  // Prefer the shared engine's canonical label (single source of truth); fall
+  // back to a legacy-aware map so pre-port stored values still read cleanly.
+  if (mode) {
+    try {
+      const d = window.WR?.GmMode?.describe?.(mode);
+      if (d && d.label) return d.label;
+    } catch (_) { /* fall through */ }
+  }
+  const labels = { rebuild: 'Rebuild', balanced_rebuild: 'Balanced Rebuild', compete: 'Compete', contend: 'Contend', win_now: 'Win Now', custom: 'Custom' };
   return labels[mode] || mode || 'current';
 }
 
