@@ -272,6 +272,8 @@ function resetRosterSort(){rosterSortKey='value';rosterSortDir=-1;rosterFilter='
 
 // Recon verdict helper — delegates to shared getPlayerAction()
 function _reconVerdict(pid){
+  // The buy/sell/hold verdict is a recommendation → Scout Pro only. Free sees raw values.
+  if(typeof window.isScoutPro==='function'&&!window.isScoutPro())return null;
   if(typeof getPlayerAction!=='function')return null;
   const v=getPlayerAction(pid);
   if(!v||v.action==='HOLD'&&v.reason==='Not enough data')return null;
@@ -281,15 +283,21 @@ function _reconVerdict(pid){
 // ── Roster grouping + inline row expansion ─────────────────────────
 let _rosterGroup='slot'; // slot | pos | verdict
 let _rosterExpanded=null;
-const _rosterGroupCycle=[{key:'slot',label:'Slot'},{key:'pos',label:'Position'},{key:'verdict',label:'Verdict'}];
+const _ROSTER_GROUPS_ALL=[{key:'slot',label:'Slot'},{key:'pos',label:'Position'},{key:'verdict',label:'Verdict'}];
+// Verdict grouping = a buy/sell/hold recommendation lens → Scout Pro only.
+function _rosterGroupCycleArr(){
+  const pro=typeof window.isScoutPro!=='function'||window.isScoutPro();
+  return pro?_ROSTER_GROUPS_ALL:_ROSTER_GROUPS_ALL.filter(g=>g.key!=='verdict');
+}
 let _rosterGroupIdx=0;
 function cycleRosterGroup(){
-  _rosterGroupIdx=(_rosterGroupIdx+1)%_rosterGroupCycle.length;
-  _rosterGroup=_rosterGroupCycle[_rosterGroupIdx].key;
-  document.querySelectorAll('.js-roster-group').forEach(b=>{b.textContent='Group: '+_rosterGroupCycle[_rosterGroupIdx].label;});
+  const cyc=_rosterGroupCycleArr();
+  _rosterGroupIdx=(_rosterGroupIdx+1)%cyc.length;
+  _rosterGroup=cyc[_rosterGroupIdx].key;
+  document.querySelectorAll('.js-roster-group').forEach(b=>{b.textContent='Group: '+cyc[_rosterGroupIdx].label;});
   buildRosterTable();
 }
-function rosterGroupLabel(){return _rosterGroupCycle[_rosterGroupIdx].label;}
+function rosterGroupLabel(){const cyc=_rosterGroupCycleArr();return (cyc[_rosterGroupIdx]||cyc[0]).label;}
 window.cycleRosterGroup=cycleRosterGroup;
 window.rosterGroupLabel=rosterGroupLabel;
 function _rosterVerdictBucket(pid){
@@ -341,8 +349,9 @@ function _rosterExpansion(r){
   const tag=window._playerTags?.[r.pid]||'';
   const tBtn=(k,l)=>`<button class="rr-x-tag${tag===k?' active':''}" onclick="event.stopPropagation();_rosterTag('${r.pid}','${k}')">${l}</button>`;
   const nm=(r.name||'').replace(/'/g,"\\'");
+  const _rrPro=typeof window.isScoutPro!=='function'||window.isScoutPro();
   return `<div class="rr-expand">
-    <div class="rr-read">${_rosterReadLine(r)}</div>
+    ${_rrPro?`<div class="rr-read">${_rosterReadLine(r)}</div>`:''}
     <div class="rr-sigs">${signals}</div>
     <div class="rr-x-tags">${tBtn('untouchable','Untouchable')}${tBtn('trade','Shop')}${tBtn('watch','Watch')}${tBtn('cut','Cut')}</div>
     <div class="rr-x-actions">
@@ -1578,8 +1587,15 @@ function renderWaiverAlexTop5() {
   const top5 = scored.slice(0, 5);
 
   // ── Section A: Alex's Top Picks (compact) ──
+  // Scout Pro: the app scoring/recommending waiver targets for you (NEED/TARGET fit +
+  // FAAB bids) is an AI read. Free keeps the raw sortable board (Section B) only.
+  const _wtGated = typeof window.isScoutPro === 'function' && !window.isScoutPro();
   let html = '';
-  if (top5.length) {
+  if (_wtGated) {
+    html += typeof _tierGatePlaceholder === 'function'
+      ? _tierGatePlaceholder("Alex's Top Picks", window.FEATURES?.FAAB_INTELLIGENCE || 'faab_intelligence')
+      : '';
+  } else if (top5.length) {
     html += `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--rl);padding:10px 12px;margin-bottom:14px">
       <div style="font-size:11px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Alex's Top Picks</div>`;
     top5.forEach((a, i) => {
@@ -2278,7 +2294,9 @@ function _buildLineupState(){
   // SF/FLEX/IDP-FLEX eligibility, where the old greedy could misassign). Greedy fallback.
   const SS=window.App&&window.App.StartSit;
   let _solved=false;
-  if(SS&&typeof SS.optimalLineupWeekly==='function'){
+  // The provably-optimal solver is Scout Pro; free falls to the greedy fallback below.
+  const _luPro=typeof window.isScoutPro!=='function'||window.isScoutPro();
+  if(_luPro&&SS&&typeof SS.optimalLineupWeekly==='function'){
     try{
       const byPid={};scored.forEach(p=>{byPid[p.pid]=p;});
       const players=scored.map(p=>({pid:p.pid,pos:p.pos,available:true,pts:p.score}));
@@ -2476,13 +2494,14 @@ function _renderStartersView(analyzed){
       <div class="lu-score-col">
         <div class="lu-score" style="color:${scoreCol}">${p.score.toFixed(1)}</div>
         ${(_ssDepth&&p.floor!=null&&p.ceiling!=null)?`<div class="mono" style="font-size:10px;color:var(--text3);white-space:nowrap;margin-top:1px">${p.floor.toFixed(0)}–${p.ceiling.toFixed(0)}</div>`:''}
-        <div class="lu-confidence ${confLabelCls}">${confLabel}</div>
+        ${_ssDepth?`<div class="lu-confidence ${confLabelCls}">${confLabel}</div>`:''}
       </div>
       <div class="lu-chevron"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></div>
     </div>`;
 
-    // Inline swap hint for suboptimal starters
-    if(l.confidence==='suboptimal'&&l.bestAlt){
+    // Inline swap hint for suboptimal starters — the actual named "start X instead" rec
+    // (with point gain) is STARTSIT_DEPTH depth; free sees only the count teaser above.
+    if(_ssDepth&&l.confidence==='suboptimal'&&l.bestAlt){
       html+=`<div class="lu-swap-hint" onclick="event.stopPropagation();openPlayerModal('${l.bestAlt.pid}')">
         <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 014-4h14"/></svg>
         Start instead: ${l.bestAlt.name}

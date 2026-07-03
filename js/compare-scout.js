@@ -60,7 +60,9 @@ function _cmpRender() {
   ];
   // Drop the ROS row entirely if no column has a distinct ROS value (dynasty default).
   const showRos = cols.some(c => c.ros != null && c.ros !== c.dhq);
-  const rows = ROWS.filter(r => r.label !== 'ROS' || showRos);
+  // The Verdict row is a buy/sell/hold recommendation → Scout Pro. Free compares raw values.
+  const _cmpPro = typeof window.isScoutPro !== 'function' || window.isScoutPro();
+  const rows = ROWS.filter(r => (r.label !== 'ROS' || showRos) && (r.label !== 'Verdict' || _cmpPro));
 
   const head = `<th class="cmp-rlabel"></th>` + cols.map(c => `<th>
       <div class="cmp-col-head">

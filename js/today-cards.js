@@ -298,6 +298,8 @@ function _tcSelect(ctx, n) {
 
 function _tcRenderPanel(ctx) {
   if (!ctx || !ctx.me) return '';
+  // The adaptive analysis panel is the app doing the analysis for you → Scout Pro.
+  if (typeof window.isScoutPro === 'function' && !window.isScoutPro()) return '';
   const n = (window.innerWidth >= 900) ? 3 : 2;
   const cards = _tcSafe(() => _tcSelect(ctx, n)) || [];
   if (!cards.length) return '';
@@ -326,6 +328,9 @@ function _tcMatchCardKey(text) {
   return null;
 }
 function _tcRenderCard(key, ctx) {
+  // Same gate as _tcRenderPanel — the summon-from-chat path is Scout Pro too, so a
+  // free user can't pull the adaptive analysis cards (incl. reads of other teams).
+  if (typeof window.isScoutPro === 'function' && !window.isScoutPro()) return '';
   const c = _TC_CATALOG.find(x => x.key === key);
   return (c && ctx) ? (_tcSafe(() => c.render(ctx)) || '') : '';
 }

@@ -111,7 +111,9 @@ function _renderGMBarAlexBlock() {
   if (!el) return;
   const strat = window.GMStrategy?.getStrategy?.() || {};
   const eng = window.GMEngine;
-  const fi = eng?.generateFieldIntel?.() || [];
+  // Field-intel bullets are Alex's reads → Scout Pro only. Own strategy config stays.
+  const _gmbPro = typeof window.isScoutPro !== 'function' || window.isScoutPro();
+  const fi = (_gmbPro && eng?.generateFieldIntel) ? eng.generateFieldIntel() : [];
   const mode = (strat.mode || 'balanced').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
   const aggr = strat.aggression || 'medium';
   const targets = (strat.targetPositions || []).map(_scoutPosLabel).join(', ') || '—';
@@ -651,7 +653,8 @@ function renderScoutBriefing() {
   const _feat = window.FEATURES?.BRIEFING_REASONING || 'briefing_reasoning';
 
   // Alex's field-brief lead — greeting + league situation, voiced via AlexVoice (template-first).
-  const _leadTxt = (typeof _scoutBriefLead === 'function') ? _scoutBriefLead() : '';
+  // Interpretive read → Scout Pro only (gated with the rest of the briefing reasoning).
+  const _leadTxt = ((typeof _scoutBriefLead === 'function') && !_reasoningGated) ? _scoutBriefLead() : '';
   const _briefLead = _leadTxt ? `<div class="scout-brief-lead" style="display:flex;gap:10px;align-items:flex-start;padding:0 0 12px;margin-bottom:10px;border-bottom:1px solid var(--border)"><span style="width:24px;height:24px;border-radius:50%;background:var(--accent);color:#0a0a0a;font-weight:800;font-size:12px;display:flex;align-items:center;justify-content:center;flex-shrink:0">A</span><div style="font-size:14px;line-height:1.55;color:var(--text2)">${_leadTxt}</div></div>` : '';
 
   itemsEl.innerHTML = _briefLead + items.map(item => {
@@ -1277,8 +1280,9 @@ function _scoutGatedMoreRow(title, sub, feature) {
 
 function _scoutRenderPriorities(priorities, gated) {
   const all = priorities || [];
-  const rows = all.slice(0, gated ? 1 : 3);
-  if (!rows.length) return '';
+  // Bare-bones free gets NO priority recommendations — only the locked teaser.
+  const rows = all.slice(0, gated ? 0 : 3);
+  if (!rows.length && !(gated && all.length)) return '';
   const more = all.length - rows.length;
   return `<section class="scout-brief-section">
     <div class="scout-section-head">
@@ -1300,8 +1304,9 @@ function _scoutRenderPriorities(priorities, gated) {
 
 function _scoutRenderOpportunities(opportunities, gated) {
   const all = opportunities || [];
-  const rows = all.slice(0, gated ? 1 : 3);
-  if (!rows.length) return '';
+  // Free sees NO opponent trade-match reads (scout reads of other teams) — teaser only.
+  const rows = all.slice(0, gated ? 0 : 3);
+  if (!rows.length && !(gated && all.length)) return '';
   const more = all.length - rows.length;
   return `<section class="scout-brief-section">
     <div class="scout-section-head">
@@ -1322,8 +1327,9 @@ function _scoutRenderOpportunities(opportunities, gated) {
 
 function _scoutRenderFieldIntel(items, gated) {
   const all = items || [];
-  const rows = all.slice(0, gated ? 1 : 4);
-  if (!rows.length) return '';
+  // Free gets NO "Alex's Read" field intel — only the locked teaser.
+  const rows = all.slice(0, gated ? 0 : 4);
+  if (!rows.length && !(gated && all.length)) return '';
   const more = all.length - rows.length;
   return `<section class="scout-brief-section">
     <div class="scout-section-head">
@@ -1459,9 +1465,11 @@ function renderWarRoomBrief() {
 
       <div class="scout-diagnosis-card">
         <span class="scout-kicker">Intelligence Briefing</span>
-        ${_heroLead ? `<p style="color:var(--text2)">${_heroLead}</p>` : ''}
+        ${_briefGated
+          ? `<p style="color:var(--text3)">Unlock Alex's intelligence briefing for a full read on your roster, window, and moves.</p>`
+          : `${_heroLead ? `<p style="color:var(--text2)">${_heroLead}</p>` : ''}
         <p>${_esc(diagnosis.line1 || 'Alex is reading your roster.')}</p>
-        ${diagnosis.line2 && !_briefGated ? `<p>${_esc(diagnosis.line2)}</p>` : ''}
+        ${diagnosis.line2 ? `<p>${_esc(diagnosis.line2)}</p>` : ''}`}
       </div>
     </section>
 
@@ -1476,20 +1484,20 @@ function renderWarRoomBrief() {
     <section class="scout-next-card">
       <div class="scout-next-top">
         <span class="scout-kicker">Next Move</span>
-        ${_scoutAlignmentBadge(nextMove?.alignment)}
+        ${_briefGated ? '' : _scoutAlignmentBadge(nextMove?.alignment)}
       </div>
-      <h2>${_esc(nextMove?.action || 'Ask Alex what to do next')}</h2>
-      ${targetMeta ? `<p class="scout-next-target">${_esc(targetMeta)}</p>` : ''}
-      <div class="scout-next-brief">
+      <h2>${_esc(_briefGated ? 'Ask Alex what to do next' : (nextMove?.action || 'Ask Alex what to do next'))}</h2>
+      ${(!_briefGated && targetMeta) ? `<p class="scout-next-target">${_esc(targetMeta)}</p>` : ''}
+      ${_briefGated ? '' : `<div class="scout-next-brief">
         ${nextRows.map(row => `<div><span>${_esc(row.label)}</span><strong>${_esc(row.value)}</strong></div>`).join('')}
-      </div>
-      <div class="scout-next-meta">
+      </div>`}
+      ${_briefGated ? '' : `<div class="scout-next-meta">
         <span>${_esc(_scoutConfidenceLabel(nextMove?.confidence))}</span>
         <span>${_esc(_scoutUrgencyLabel(nextMove?.urgency))}</span>
-      </div>
+      </div>`}
       ${_briefGated ? '' : _scoutRenderRecommendationContract(nextMoveContract)}
       <div class="scout-brief-actions">
-        <button class="scout-primary-btn" onclick="${_scoutNextMoveAction(nextMove)}">${_esc(_scoutNextMoveButtonLabel(nextMove))}</button>
+        <button class="scout-primary-btn" onclick="${_briefGated ? _scoutFillAction('What should I focus on next?') : _scoutNextMoveAction(nextMove)}">${_esc(_briefGated ? 'Ask Alex' : _scoutNextMoveButtonLabel(nextMove))}</button>
         ${_briefGated ? '' : `<button class="scout-secondary-btn" onclick="${_scoutFillAction(`Explain this recommendation: ${nextMove?.action || 'what should I do next?'}`)}">See Why</button>`}
       </div>
     </section>
@@ -2012,11 +2020,11 @@ function renderTeamCommandPanel() {
           <small>Health</small>
         </div>
       </div>
-      <div class="scout-mini-read">
+      ${_teamGated ? '' : `<div class="scout-mini-read">
         <strong>Scout read:</strong> ${weakRooms && weakRooms !== 'none'
           ? `Your biggest roster pressure is ${_esc(weakRooms)}. ${hasValueData ? 'Best rooms by value' : 'Deepest rooms by count'}: ${_esc(topRooms)}.`
           : `No critical room is flashing red. Use surplus and pick capital to improve your weekly ceiling.`}
-      </div>
+      </div>`}
     </section>
 
     <section class="scout-metric-grid scout-metric-strip">
@@ -2029,13 +2037,13 @@ function renderTeamCommandPanel() {
     <details class="scout-section-card scout-rooms-card">
       <summary class="scout-rooms-summary">
         <div class="scout-rooms-head"><span class="scout-kicker">Roster Rooms</span>
-          <span class="scout-rooms-tags">${hasValueData && topRooms !== '—' ? `<b class="is-strong">Strong</b> ${_esc(topRooms)}` : 'Depth by room'}${weakRooms && weakRooms !== 'none' ? ` · <b class="is-thin">Thin</b> ${_esc(weakRooms)}` : ''}</span>
+          <span class="scout-rooms-tags">${_teamGated ? 'Depth by room' : `${hasValueData && topRooms !== '—' ? `<b class="is-strong">Strong</b> ${_esc(topRooms)}` : 'Depth by room'}${weakRooms && weakRooms !== 'none' ? ` · <b class="is-thin">Thin</b> ${_esc(weakRooms)}` : ''}`}</span>
         </div>
         <span class="scout-rooms-caret" aria-hidden="true">▾</span>
       </summary>
       <div class="scout-room-grid">
         ${rooms.map(room => {
-          const tone = _scoutStatusTone(room.status);
+          const tone = _teamGated ? { cls: '', label: '' } : _scoutStatusTone(room.status);
           const top = room.top?.pid ? `${pNameShort(room.top.pid)}${hasValueData ? ' · ' + Math.round(room.top.val).toLocaleString() : ''}` : 'No usable asset';
           const pct = hasValueData ? Math.min(100, Math.round((room.value / totalValue) * 180)) : Math.min(100, Math.max(12, room.count * 18));
           return `<button class="scout-room-card ${tone.cls}" onclick="fillGlobalChat('Audit my ${room.pos} room and tell me who to keep, trade, add, and drop.')">
@@ -2145,7 +2153,9 @@ function renderAIPanel() {
 
   // Smart suggestions: GM field intel (live, roster-aware) on top of the
   // canned ai chips so the prompts feel like Scout already read the team.
-  const fi = (window.GMEngine?.generateFieldIntel?.() || []).slice(0, 2);
+  // The field-intel reads are Scout Pro; free gets the canned prompt starters only.
+  const _aiPro = typeof window.isScoutPro !== 'function' || window.isScoutPro();
+  const fi = _aiPro ? (window.GMEngine?.generateFieldIntel?.() || []).slice(0, 2) : [];
   const fiPrompts = fi.map(s => ({ title: s, prompt: s }));
   const canned = (TAB_CHIPS.ai || []).map(c => ({ title: c.title, sub: c.sub, prompt: `${c.title}: ${c.sub}` }));
   const suggestions = [...fiPrompts, ...canned].slice(0, 5);
@@ -3107,7 +3117,10 @@ function renderFieldLogPanel() {
   }
 
   // ── SECTION 2: GM INSIGHTS ──────────────────────────────
-  const intel = window.GMEngine?.generateFieldIntel ? window.GMEngine.generateFieldIntel() : [];
+  // GM Insights = generateFieldIntel sell/target/aggression reads → Scout Pro only
+  // (same gate as the brief's "Alex's Read"). Free keeps the raw Behavior Profile grid.
+  const _fiGated = typeof canAccess === 'function' && !canAccess(window.FEATURES?.BRIEFING_REASONING || 'briefing_reasoning');
+  const intel = (!_fiGated && window.GMEngine?.generateFieldIntel) ? window.GMEngine.generateFieldIntel() : [];
   const tradeFreq = _getTradeFrequency(log);
   const faabStyle = _getFaabStyle(log);
   const posBias   = _getPositionBias(log);
@@ -3126,7 +3139,9 @@ function renderFieldLogPanel() {
             <span class="activity-intel-icon">🧠</span>
             <span class="activity-intel-text">${_esc(obs)}</span>
           </div>`).join('')
-        : `<div style="font-size:13px;color:var(--text3);padding:8px 0">Make some moves and GM Insights will start mapping your patterns.</div>`
+        : _fiGated
+          ? `<button class="activity-intel-item scout-gated-more" style="width:100%;text-align:left;background:none;border:none;cursor:pointer;font:inherit" onclick="if(window.showProLaunchPage){showProLaunchPage()}else{showUpgradePrompt('${window.FEATURES?.BRIEFING_REASONING || 'briefing_reasoning'}')}"><span class="activity-intel-icon" aria-hidden="true">🔒</span><span class="activity-intel-text">Unlock GM Insights with Scout Pro — Alex's read on your moves, sell windows, and targets.</span></button>`
+          : `<div style="font-size:13px;color:var(--text3);padding:8px 0">Make some moves and GM Insights will start mapping your patterns.</div>`
       }
     </div>
     <div class="activity-behavior-profile">
@@ -4078,7 +4093,7 @@ function renderLeagueIntelPanel() {
       <div>
         <div class="scout-kicker">League Intel</div>
         <h1>Read the room before you make the move.</h1>
-        <p>${_esc(marketRead.body)}</p>
+        <p>${_liGated ? 'Browse the league below — every roster, record, future pick, and FAAB budget in one place. You make the read.' : _esc(marketRead.body)}</p>
       </div>
       <div class="league-intel-hero-actions">
         ${best ? `<button class="scout-primary-btn" onclick="leagueIntelBuildTrade('${_leagueIntelRid(best.rosterId)}')">Build with ${_esc(best.shortName)}</button>` : ''}
@@ -4348,8 +4363,11 @@ function _leagueIntelOwnerCard(row, me, gated) {
       </span>
     </button>
     <div class="league-owner-detail-row">
-      <span><b>Needs</b>${needs.length ? needs.map(p => `<em class="bad">${_esc(p)}</em>`).join('') : '<em>Stable</em>'}</span>
-      <span><b>Has</b>${strengths.length ? strengths.map(p => `<em class="good">${_esc(p)}</em>`).join('') : '<em>Flat</em>'}</span>
+      ${_dnaGated
+        ? `<span><b>Needs</b><em>🔒 Pro</em></span>
+      <span><b>Has</b><em>🔒 Pro</em></span>`
+        : `<span><b>Needs</b>${needs.length ? needs.map(p => `<em class="bad">${_esc(p)}</em>`).join('') : '<em>Stable</em>'}</span>
+      <span><b>Has</b>${strengths.length ? strengths.map(p => `<em class="good">${_esc(p)}</em>`).join('') : '<em>Flat</em>'}</span>`}
       <span><b>Capital</b><em>${row.picks.length} picks</em><em>${row.faab.isFAAB ? '$' + row.faab.remaining : 'Priority'}</em></span>
     </div>
     ${isOpen ? _leagueIntelDossier(row, me, gated) : ''}
@@ -4361,12 +4379,10 @@ function _leagueIntelDossier(row, me, gated) {
   // Free: your own dossier is full; opponents show the Scout Read teaser + a
   // gated placeholder for the deep DNA dossier (assets/rooms/capital/history).
   if (gated && !row.isMe) {
-    const fitWhy = _leagueIntelFitWhy(row, me, true);
+    // Free = raw snapshot only. The Scout Read (fit-why) and full dossier are Pro:
+    // "no scout reads or needs analysis of other teams" — you scout them yourself.
     return `<div class="league-owner-dossier">
-      <div class="league-dossier-read">
-        <div><span>Scout Read</span><p>${_esc(fitWhy)}</p></div>
-      </div>
-      ${_tierGatePlaceholder('Full owner dossier — assets, rooms, capital, trade history & DNA', window.FEATURES?.OWNER_DNA || 'owner_dna')}
+      ${_tierGatePlaceholder('Scout read, roster needs & full owner dossier — assets, rooms, capital, trade history & DNA', window.FEATURES?.OWNER_DNA || 'owner_dna')}
       <div class="league-dossier-actions">
         <button class="scout-primary-btn" onclick="event.stopPropagation();leagueIntelBuildTrade('${safeRid}')">Build Trade</button>
       </div>

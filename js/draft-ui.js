@@ -234,6 +234,9 @@ window.setDraftGameplanArch = setDraftGameplanArch;
 function renderDraftGameplan() {
   const el = document.getElementById('draft-entry-gameplan');
   if (!el) return;
+  // Archetype blueprint / round-by-round plan is a draft optimizer → Scout Pro.
+  // Mirrors the sibling renderDraftNeeds gate; free drafts old-school.
+  if (typeof canAccess === 'function' && !canAccess(window.FEATURES?.DRAFT_ARCHETYPES || 'draft_archetypes')) { el.innerHTML = ''; return; }
   const DG = window.App && window.App.DraftGameplan;
   const S = window.S || {};
   const league = S.leagues?.find(l => l.league_id === S.currentLeagueId);
@@ -649,6 +652,8 @@ let _mockLastInsightPickIdx = -99;
 const MOCK_INSIGHT_EVERY_N_PICKS = 3;
 
 async function _mockFireAlexInsight(trigger, context) {
+  // Live AI draft commentary is Scout Pro — free runs the mock old-school (no Alex watching).
+  if (typeof window.isScoutPro === 'function' && !window.isScoutPro()) return;
   if (_mockInsightInFlight) return;
   if (_mockState && (_mockState.currentIdx - _mockLastInsightPickIdx) < MOCK_INSIGHT_EVERY_N_PICKS) return;
   if (typeof hasAnyAI !== 'function' || !hasAnyAI(false)) return;
@@ -741,8 +746,11 @@ function _mockDNAInformedPick(rosterId, available, round, pickNumber) {
   if (!available.length) return available[0] || null;
   const assessTeamFromGlobal = window.assessTeamFromGlobal || window.App?.assessTeamFromGlobal;
 
-  // Delegate to shared MockEngine when available (canonical 10-layer engine)
-  if (window.App?.MockEngine?.personaPick) {
+  // Delegate to shared MockEngine when available (canonical 10-layer engine).
+  // Persona/DNA-informed opponents are Scout Pro ("AI-powered mock draft"); free
+  // opponents draft pure best-available (the BPA fallback below).
+  const _mockPro = typeof window.isScoutPro !== 'function' || window.isScoutPro();
+  if (_mockPro && window.App?.MockEngine?.personaPick) {
     const LI = window.LI || {};
     const assess = typeof assessTeamFromGlobal === 'function' ? assessTeamFromGlobal(rosterId) : null;
     const dna = _getDraftDNAForRoster(rosterId);
@@ -1446,8 +1454,10 @@ function renderRookieBoard(){
   const _rbDs = (_rbStrat.draftStyle === 'positional_need' ? 'need' : _rbStrat.draftStyle) || 'bpa';
   const _rbAssess = typeof assessTeamFromGlobal === 'function' ? assessTeamFromGlobal(S.myRosterId) : null;
   const _rbNeeds = (_rbAssess?.needs || []).map(n => typeof n === 'string' ? n : n.pos);
+  // The decisive "Alex says: Take X" hero is the app making the pick for you → Scout Pro.
+  // Free gets the raw value-sorted board below and decides for themselves.
   let _rbHero = '';
-  if (rookies.length > 0) {
+  if (rookies.length > 0 && (typeof window.isScoutPro !== 'function' || window.isScoutPro())) {
     let _rbPick = rookies[0];
     if (_rbDs === 'need' && _rbNeeds.length) _rbPick = rookies.find(r => _rbNeeds.includes(r.pos)) || _rbPick;
     else if (_rbDs === 'mix' && _rbNeeds.length) _rbPick = rookies.find(r => _rbNeeds.includes(r.pos) || (_rbStrat.targetPositions||[]).includes(r.pos)) || _rbPick;
@@ -1730,6 +1740,8 @@ function _toggleMockTendencies(){
 window._toggleMockTendencies=_toggleMockTendencies;
 
 async function runDraftScouting(){
+  // AI draft scouting report is Scout Pro — free drafts without the AI analysis.
+  if(typeof window.isScoutPro==='function'&&!window.isScoutPro())return;
   if(!hasAnyAI()){switchTab('settings');return;}
   if(typeof trackUsage==='function')trackUsage('draft_targets_flagged');
   const btn=$('draft-scout-btn');btn.textContent='Scouting...';btn.disabled=true;
@@ -2095,7 +2107,9 @@ function renderTopProspects(){
   const needPills = needPositions.slice(0, 5).map((p, i) =>
     `<span class="${i === 0 ? 'danger' : ''}">${window.App?.posLabel?.(p)||(p==='DEF'?'D/ST':p)}</span>`
   ).join('');
-  const scoutPlanPrompt = `Build my rookie draft plan. My first pick is ${firstPickLabel}, my needs are ${needPositions.join(', ') || 'none'}, and Alex currently recommends ${alexPick.name}.`;
+  // The decisive "Take X" rookie recommendation is Scout Pro (mirrors _rbHero); free gets the raw board.
+  const _rtpPro = typeof window.isScoutPro !== 'function' || window.isScoutPro();
+  const scoutPlanPrompt = `Build my rookie draft plan. My first pick is ${firstPickLabel}, my needs are ${needPositions.join(', ') || 'none'}${_rtpPro ? `, and Alex currently recommends ${alexPick.name}` : ''}.`;
 
   html += `<section class="rookie-hq">
     <div class="rookie-hq-hero">
@@ -2118,7 +2132,7 @@ function renderTopProspects(){
     </div>
 
     <div class="rookie-hq-grid">
-      <button class="rookie-priority-card" onclick="openPlayerModal('${alexPick.pid}')">
+      ${_rtpPro ? `<button class="rookie-priority-card" onclick="openPlayerModal('${alexPick.pid}')">
         <div class="rookie-card-head"><span>Scout Priority</span><em>${alexPick.pos} · ${alexPick.val.toLocaleString()} DHQ</em></div>
         <strong>Take ${escHtml(alexPick.name)}</strong>
         <p>${escHtml(alexWhy)}.</p>
@@ -2126,7 +2140,7 @@ function renderTopProspects(){
           ${alexPickNeedFit || alexPickTargetFit ? '<span class="good">Aligned</span>' : '<span>Best available</span>'}
           ${tierGap > 1000 ? '<span class="danger">Tier break</span>' : ''}
         </div>
-      </button>
+      </button>` : ''}
 
       <div class="rookie-hq-card">
         <div class="rookie-card-head"><span>Draft Path</span><em>${_ownedCount} picks</em></div>
@@ -2596,13 +2610,16 @@ function renderMockDraftUI(){
     const myProfile=_mockState.teamProfiles?.[S.myRosterId]||{};
     const myNeeds=myProfile.needs||[];
 
-    // Alex recommendation: top pick at need position or BPA
+    // Alex recommendation: top pick at need position or BPA — Scout Pro only.
+    // Free drafts old-school: raw available board, no "take him" nudge.
     let alexPick=null,alexReason='';
-    for(const pos of myNeeds){
-      const candidate=available.find(p=>p.pos===pos);
-      if(candidate){alexPick=candidate;alexReason=`fills your ${pos} gap`;break;}
+    if(typeof window.isScoutPro!=='function'||window.isScoutPro()){
+      for(const pos of myNeeds){
+        const candidate=available.find(p=>p.pos===pos);
+        if(candidate){alexPick=candidate;alexReason=`fills your ${pos} gap`;break;}
+      }
+      if(!alexPick&&available.length){alexPick=available[0];alexReason='best player available';}
     }
-    if(!alexPick&&available.length){alexPick=available[0];alexReason='best player available';}
 
     // Consensus rank for top picks
     const enriched=available.map(p=>{
@@ -2988,7 +3005,7 @@ window.renderDynamicMockSetup = renderDynamicMockSetup;
 
 function onDraftTabOpen(){
   renderTopProspects();
-  if(!_draftScoutingRun&&LI_LOADED&&hasAnyAI()){
+  if(!_draftScoutingRun&&LI_LOADED&&hasAnyAI()&&(typeof window.isScoutPro!=='function'||window.isScoutPro())){
     _draftScoutingRun=true;
     const contentEl=$('draft-scout-content');
     if(contentEl)contentEl.style.display='block';
