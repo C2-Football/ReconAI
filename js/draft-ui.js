@@ -237,6 +237,10 @@ function renderDraftGameplan() {
   // Archetype blueprint / round-by-round plan is a draft optimizer → Scout Pro.
   // Mirrors the sibling renderDraftNeeds gate; free drafts old-school.
   if (typeof canAccess === 'function' && !canAccess(window.FEATURES?.DRAFT_ARCHETYPES || 'draft_archetypes')) { el.innerHTML = ''; return; }
+  // Dynasty (E5): no gameplan for dynasty leagues at any tier — format gate
+  // COMPOSES with the tier gate above, never replaces it.
+  if (typeof window.currentLeagueAllowsRedraftFeatures === 'function'
+      && !window.currentLeagueAllowsRedraftFeatures()) { el.innerHTML = ''; return; }
   const DG = window.App && window.App.DraftGameplan;
   const S = window.S || {};
   const league = S.leagues?.find(l => l.league_id === S.currentLeagueId);

@@ -977,6 +977,20 @@ function showLeagueUpgradeFromHub(leagueId,leagueName){
 window.showLeagueUpgradeFromHub=showLeagueUpgradeFromHub;
 window.App.showLeagueUpgradeFromHub=showLeagueUpgradeFromHub;
 
+// Dynasty leagues hide redraft-era features (owner directive 2026-07-05,
+// fail-open: keeper/unknown keep everything). One accessor over the shared
+// predicate so every Scout gate agrees with warroom's LeagueSkin flags.
+// Game Day surfaces (Start/Sit Lab, lineup check, bye planner) are EXEMPT
+// per ruling E1 — do not wire this into those.
+function currentLeagueAllowsRedraftFeatures(){
+  const l=S.leagues?.find(x=>x.league_id===S.currentLeagueId);
+  return window.App?.Intelligence?.allowRedraftFeatures
+    ? window.App.Intelligence.allowRedraftFeatures(l)
+    : !(l?.settings?.type===2); // fallback = today's behavior
+}
+window.currentLeagueAllowsRedraftFeatures=currentLeagueAllowsRedraftFeatures;
+window.App.currentLeagueAllowsRedraftFeatures=currentLeagueAllowsRedraftFeatures;
+
 function clearLeagueLoadingState(){
   if(!S.currentLeagueId||!S.myRosterId)return false;
   const hub=$('league-hub');if(hub)hub.style.display='none';
