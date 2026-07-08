@@ -616,31 +616,12 @@
         </div>
       </details>
 
-      <!-- Alex Style Picker (collapsed by default) -->
-      <details style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--rl);margin-bottom:14px">
-        <summary style="padding:14px 16px;cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px;user-select:none">
-          <span style="font-size:14px;font-weight:700;color:var(--text);flex:1">Alex's Style</span>
-          <span id="alex-style-current" style="font-size:12px;color:var(--text3)"></span>
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="var(--text3)" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-        </summary>
-        <div style="padding:0 16px 14px">
-          <div style="font-size:12px;color:var(--text3);margin-bottom:10px">How Alex communicates across all AI responses.</div>
-          <div id="alex-style-picker" style="display:flex;flex-direction:column;gap:6px"></div>
-          <button class="btn btn-ghost" onclick="window.replayScoutTutorial&&window.replayScoutTutorial()" style="margin-top:10px;width:100%;padding:9px 12px;font-size:13px;border-color:rgba(212,175,55,.28);color:var(--accent)">Replay GM Briefing</button>
-        </div>
-      </details>
-      <script>
-      (function(){
-        const el=document.getElementById('alex-style-picker');if(!el)return;
-        function render(){
-          const styles=window.ALEX_STYLES||{};const cur=localStorage.getItem('wr_alex_style')||'default';
-          const curLabel=document.getElementById('alex-style-current');
-          if(curLabel&&styles[cur])curLabel.textContent=styles[cur].name||'Default';
-          el.innerHTML=Object.entries(styles).map(([k,s])=>`<button onclick="localStorage.setItem('wr_alex_style','${k}');this.closest('details').querySelector('#alex-style-current').textContent='${(s.name||'').replace(/'/g,"\\'")}';document.querySelectorAll('#alex-style-picker button').forEach(b=>{b.style.borderColor='var(--border)';b.style.background='var(--bg3)';b.querySelector('div').style.color='var(--text)'});this.style.borderColor='var(--accent)';this.style.background='rgba(212,175,55,.06)';this.querySelector('div').style.color='var(--accent)'" style="text-align:left;padding:10px 12px;background:${k===cur?'rgba(212,175,55,.06)':'var(--bg3)'};border:1px solid ${k===cur?'var(--accent)':'var(--border)'};border-radius:8px;cursor:pointer;font-family:inherit"><div style="font-size:13px;font-weight:700;color:${k===cur?'var(--accent)':'var(--text)'}">${s.name}${k===cur?' ✓':''}</div><div style="font-size:11px;color:var(--text3);line-height:1.4;margin-top:2px">${(s.tone||'').substring(0,80)}...</div></button>`).join('');
-        }
-        if(window.ALEX_STYLES)render();else setTimeout(render,500);
-      })();
-      </script>
+      <!-- Alex Ingram — single canonical voice (persona picker retired 2026-07-08) -->
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--rl);padding:14px 16px;margin-bottom:14px">
+        <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:4px">Alex Ingram</div>
+        <div style="font-size:12px;color:var(--text3);margin-bottom:10px">Your GM chief of staff. Replay the walkthrough any time.</div>
+        <button class="btn btn-ghost" onclick="window.replayScoutTutorial&&window.replayScoutTutorial()" style="width:100%;padding:9px 12px;font-size:13px;border-color:rgba(212,175,55,.28);color:var(--accent)">Replay GM Briefing</button>
+      </div>
 
       <!-- 1. System Status -->
       <div id="settings-status" style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--rl);padding:14px 16px;margin-bottom:14px">

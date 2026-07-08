@@ -120,7 +120,7 @@ function _renderGMBarAlexBlock() {
   const fiBullets = fi.slice(0, 2).map(s => `<div style="font-size:11px;color:var(--text3);padding:2px 0">· ${_esc(s)}</div>`).join('');
   el.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:${fiBullets ? '6px' : '0'}">
-      <div style="font-size:11px;font-weight:700;color:var(--accent);letter-spacing:.06em;text-transform:uppercase">AI GM · Alex ${strat.alexPersonality || 'balanced'}</div>
+      <div style="font-size:11px;font-weight:700;color:var(--accent);letter-spacing:.06em;text-transform:uppercase">AI GM · Alex Ingram</div>
       <div style="font-size:11px;color:var(--text3)">${_esc(mode)} · ${_esc(aggr)} · ${_esc(targets)}</div>
     </div>
     ${fiBullets}
@@ -1010,10 +1010,6 @@ function _scoutStrategy() {
   return window.GMStrategy?.getStrategy ? window.GMStrategy.getStrategy() : {};
 }
 
-function _scoutAlexLabel(strategy) {
-  return _scoutLabel(strategy.alexPersonality || strategy.alexStyle || 'balanced');
-}
-
 function _scoutStrategySummary(strategy) {
   const mode = _modeLabel(strategy.mode || 'balanced_rebuild');
   const target = _scoutListLabel(strategy.targetPositions, 'Any value');
@@ -1416,7 +1412,7 @@ function renderWarRoomBrief() {
       <section class="scout-brief-hero">
         <div class="scout-alex-row">
           <div class="scout-alex-avatar">AI</div>
-          <div><strong>Alex Ingram</strong><span>${_esc(_scoutAlexLabel(strategy))}</span></div>
+          <div><strong>Alex Ingram</strong><span>GM Chief of Staff</span></div>
           <button class="scout-secondary-btn" onclick="openStrategyEditor()">Strategy</button>
         </div>
         <h1>Connect your league. Alex will build the command brief.</h1>
@@ -1518,7 +1514,7 @@ function _strategyOptions(options, selected) {
 // presets auto-bundle every downstream variable (via the shared window.WR.GmMode
 // engine), plus an always-on Trade Acceptance Floor, Free-Agency filters,
 // priorities (target/sell positions, sell rules, untouchables roster picker) and
-// — in Custom mode — the individual aggression/draft/market/timeline/personality
+// — in Custom mode — the individual aggression/draft/market/timeline
 // controls. Writes CANONICAL values (rebuild/compete/win_now, 1_year/2_3_years/
 // dynasty_long, …) so every Scout + War Room consumer reads them, and mirrors
 // War Room's wr:gm-mode-changed broadcast so engines live-refresh.
@@ -1552,11 +1548,6 @@ const STRAT_TIMELINES = [
   { value: '1_year', label: '1 Year', desc: 'All chips on this season.' },
   { value: '2_3_years', label: '2–3 Years', desc: 'Medium-term contention window.' },
   { value: 'dynasty_long', label: 'Dynasty Long', desc: 'Build a program, not just a season.' },
-];
-const STRAT_PERSONALITIES = [
-  { value: 'aggressive', label: 'Aggressive', desc: 'Alex hunts for wins, pushes hard on every move.' },
-  { value: 'value_hunter', label: 'Value Hunter', desc: 'Alex obsesses over undervalued assets and market gaps.' },
-  { value: 'balanced', label: 'Balanced', desc: 'Alex weighs all options before recommending a move.' },
 ];
 const STRAT_TL_MAP = { '1yr': '1_year', '1_year': '1_year', '2yr': '2_3_years', '2-3yr': '2_3_years', '2_3_years': '2_3_years', 'dynasty_long': 'dynasty_long' };
 
@@ -1613,7 +1604,6 @@ function _stratNormalizeDraft(saved) {
     draftStyle: saved.draftStyle || 'bpa',
     marketPosture: saved.marketPosture || 'hold',
     timeline: _stratCanonTimeline(saved.timeline),
-    alexPersonality: saved.alexPersonality || 'balanced',
     targetPositions: _stratNormPosList(saved.targetPositions),
     sellPositions: _stratNormPosList(saved.sellPositions),
     sellRules: Array.isArray(saved.sellRules) ? saved.sellRules.slice() : [],
@@ -1721,7 +1711,7 @@ function _stratRenderBody() {
     (currentMode?.desc || '') + (isCustom ? '' : ' Preset bundles every downstream setting — pick Custom to tune individually.'),
     _stratModeCardsHtml(rec)
     + (rec ? `<div class="strat-rec-line"><strong>★ Recommended:</strong> ${_esc(STRAT_MODES.find(m => m.value === rec.mode)?.label || '')}${rec.tierLabel ? ` — your team grades ${_esc(String(rec.tierLabel))}` : ''}. You can still pick any direction.</div>` : '')
-    + (!isCustom ? `<div class="strat-preset-applied"><strong>Preset applied:</strong> aggression <em>${_esc(d.aggression)}</em> · draft <em>${_esc(d.draftStyle)}</em> · market <em>${_esc(d.marketPosture)}</em> · timeline <em>${_esc(_stratTimelineLabel(d.timeline))}</em> · Alex <em>${_esc(d.alexPersonality)}</em></div>` : '')
+    + (!isCustom ? `<div class="strat-preset-applied"><strong>Preset applied:</strong> aggression <em>${_esc(d.aggression)}</em> · draft <em>${_esc(d.draftStyle)}</em> · market <em>${_esc(d.marketPosture)}</em> · timeline <em>${_esc(_stratTimelineLabel(d.timeline))}</em></div>` : '')
   ));
 
   // ── Trade Acceptance Floor (always visible) ──
@@ -1805,7 +1795,6 @@ function _stratRenderBody() {
       `<div class="strat-pill-row full">${STRAT_TIMELINES.map(t => `<button type="button" class="strat-pill${d.timeline === t.value ? ' active' : ''}" onclick="_stratSet('timeline','${t.value}')">${_esc(t.label)}</button>`).join('')}</div>
        <div class="strat-section-sub" style="margin-top:6px">${_esc(STRAT_TIMELINES.find(t => t.value === d.timeline)?.desc || '')}</div>`
     ));
-    parts.push(_stratSection('Alex Personality', 'How Alex frames advice and recommendations.', _stratOptCards(STRAT_PERSONALITIES, d.alexPersonality, v => `_stratSet('alexPersonality','${v}')`)));
   }
 
   body.innerHTML = parts.join('');
@@ -1827,6 +1816,9 @@ function _stratApplyPreset(modeId) {
   _stratDraft.timeline = _stratCanonTimeline(_stratDraft.timeline);
   _stratDraft.targetPositions = _stratNormPosList(_stratDraft.targetPositions);
   _stratDraft.sellPositions = _stratNormPosList(_stratDraft.sellPositions);
+  // Preset configs may still carry legacy alexPersonality — the persona system
+  // is retired, so strip it from the draft (never surfaced, never saved).
+  delete _stratDraft.alexPersonality;
   _stratRenderBody();
 }
 function _stratSetAggression(v) {
@@ -1933,7 +1925,10 @@ function _saveScoutStrategyEditor() {
     draftStyle: d.draftStyle,
     marketPosture: d.marketPosture,
     timeline: d.timeline,
-    alexPersonality: d.alexPersonality,
+    // alexPersonality intentionally NOT written — the persona system is retired
+    // (one canonical Alex voice, owner ruling 2026-07-08). saveStrategy merges
+    // over the current strategy, so any legacy stored/synced value passes
+    // through untouched; the schema field stays parsed-but-unused.
     targetPositions: _stratNormPosList(d.targetPositions),
     sellPositions: _stratNormPosList(d.sellPositions),
     sellRules: (d.sellRules || []).slice(),
